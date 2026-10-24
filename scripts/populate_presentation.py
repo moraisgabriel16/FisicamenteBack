@@ -126,7 +126,9 @@ class Presentation:
         for classroom in classes:
             for position in range(classroom['count']):
                 female=counter%2==0;names=FIRST_F if female else FIRST_M
-                name=f'{names[(counter//2)%len(names)]} {LAST[(counter//len(names))%len(LAST)]} {LAST[(counter*7+11)%len(LAST)]}'
+                last_one=(counter*11+5)%len(LAST);last_two=(counter*9+17)%len(LAST)
+                if last_two==last_one:last_two=(last_two+1)%len(LAST)
+                name=f'{names[(counter//2)%len(names)]} {LAST[last_one]} {LAST[last_two]}'
                 key=f'student-{counter:03}';data={'name':name,'registration':f'DEMO-{YEAR}-{counter+1:04}','birth':f'{YEAR-classroom["grade"]-5}-{counter%12+1:02}-{counter%24+1:02}','sex':'Feminino' if female else 'Masculino','status':'Ativo'}
                 jobs.append((key,'alunos',data,{'class_id':classroom['row']['id']}))
                 pupils.append({'key':key,'number':counter,'position':position,'classroom':classroom,'current':position<classroom['count']-classroom['pending']})
