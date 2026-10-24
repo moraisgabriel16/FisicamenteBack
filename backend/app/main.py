@@ -221,7 +221,8 @@ def reset(body:Reset,db=Depends(get_db)):
 
 @app.get('/api/v1/me')
 def me(user=Depends(current_user),db=Depends(get_db)):
-    return {**public_user(user),'school':{'id':user.school_id,'name':db.get(School,user.school_id).name},'development':not PRODUCTION and not os.getenv('SMTP_HOST'),'email_delivery_available':bool(os.getenv('SMTP_HOST'))}
+    school=db.get(School,user.school_id)
+    return {**public_user(user),'school':{'id':user.school_id,'name':school.name,'is_demo':bool(school.settings.get('is_demo',False))},'development':not PRODUCTION and not os.getenv('SMTP_HOST'),'email_delivery_available':bool(os.getenv('SMTP_HOST'))}
 
 def require(user, roles):
     if user.role not in roles: raise HTTPException(403,'Seu perfil não permite esta operação.')
@@ -608,10 +609,13 @@ def audit_list(user=Depends(current_user),db=Depends(get_db)):
 
 class Settings(Strict):
     name: str = Field(min_length=2,max_length=180)
+    is_demo: bool | None = None
 
 @app.put('/api/v1/settings')
 def settings(body:Settings,user=Depends(current_user),db=Depends(get_db)):
-    require(user,{'coordenador','admin'});db.get(School,user.school_id).name=body.name;audit(db,user,'configurar','escola');db.commit();return {'ok':True}
+    require(user,{'coordenador','admin'});school=db.get(School,user.school_id);school.name=body.name
+    if body.is_demo is not None: school.settings={**school.settings,'is_demo':body.is_demo}
+    audit(db,user,'configurar','escola');db.commit();return {'ok':True}
 
 # Attachments are private, limited in size and served only after school/profile checks.
 @app.post('/api/v1/attachments/{student_id}',status_code=201)
