@@ -4,6 +4,18 @@ API Python/FastAPI para acompanhamento escolar, com SQLAlchemy, PostgreSQL/SQLit
 
 **Front-end:** [moraisgabriel16/Fisicamente](https://github.com/moraisgabriel16/Fisicamente).
 
+## Publicação online
+
+- Aplicação: https://fisicamente-sigma.vercel.app
+- Cadastro: https://fisicamente-sigma.vercel.app/cadastro
+- Saúde da API: https://fisicamenteback.vercel.app/api/v1/health
+
+API publicada na Vercel e conectada ao PostgreSQL Neon dedicado `fisicamente-postgres`. O cadastro inicial é imediato, com `REQUIRE_EMAIL_VERIFICATION=false`, por escolha do proprietário. Confirmação e recuperação por e-mail dependem da configuração posterior do envio. A chave de criptografia e as credenciais do banco ficam nas variáveis protegidas da hospedagem, fora do Git.
+
+O fluxo online foi validado com dados fictícios isolados: cadastro, login, convite, turma, aluno, avaliação idempotente, consulta após nova sessão e geração de PDF.
+
+O módulo de envios agendados fica oculto na Vercel até existir um executor apropriado. Os demais módulos usam chamadas normais à API e armazenamento no banco.
+
 ## Executar localmente
 
 Requisitos: Python 3.12 ou superior. Execute na raiz deste repositório:
@@ -67,6 +79,6 @@ Os testes usam um banco temporário e dados fictícios. Cobrem autenticação, a
 
 ## Estado do produto
 
-Os módulos têm implementação funcional local. Não foram publicados serviços de API, banco ou e-mail por este repositório. A implantação requer HTTPS, configuração dos serviços e homologação. Veja [IMPLEMENTACAO.md](IMPLEMENTACAO.md) para o escopo funcional e as limitações; as instruções de execução deste README prevalecem sobre os caminhos do antigo monorepo citados naquele documento.
+Os módulos têm implementação funcional local e online. A API e o PostgreSQL estão publicados; o envio de e-mails ainda não foi configurado. Veja [IMPLEMENTACAO.md](IMPLEMENTACAO.md) para o escopo funcional e as limitações; as informações atuais de publicação deste README prevalecem sobre o relato da entrega inicial naquele documento.
 
 Não há banco, chaves, anexos, `.env` real ou contas de demonstração prontas neste repositório. Crie a escola pelo cadastro do front-end.

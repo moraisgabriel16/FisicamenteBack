@@ -260,7 +260,7 @@ def payload(r):
 
 @app.get('/api/v1/catalog')
 def catalog(user=Depends(current_user)):
-    return {k:{**v,'can_write':user.role in v['write']} for k,v in CATALOG.items() if user.role in v['read']}
+    return {k:{**v,'can_write':user.role in v['write']} for k,v in CATALOG.items() if user.role in v['read'] and not (k=='agendamentos' and SERVERLESS)}
 
 @app.get('/api/v1/users')
 def users(user=Depends(current_user),db=Depends(get_db)):
@@ -318,6 +318,8 @@ class RecordBody(Strict):
     updated_at: str | None = None
 
 def validate_record(db,user,kind,body,existing=None):
+    if kind=='agendamentos' and SERVERLESS:
+        raise HTTPException(503,'Agendamentos exigem configurar um executor de tarefas nesta hospedagem.')
     spec=CATALOG.get(kind)
     if not spec: raise HTTPException(404,'Módulo não encontrado.')
     require(user,spec['write'])
