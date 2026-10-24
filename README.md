@@ -31,6 +31,13 @@ O código permanece no pacote `backend/` para manter importações, testes e mig
 - `APP_ENV=production`: exige `ENCRYPTION_KEY`, usa cookies Secure e desabilita os links de desenvolvimento.
 - `ENCRYPTION_KEY`: gere com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Guarde em segredo. A chave é indispensável para recuperar saúde e anexos cifrados.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`: envio por STARTTLS.
+- `REQUIRE_EMAIL_VERIFICATION`: padrão `true`. Na primeira publicação de testes, `false` permite entrar após o cadastro, mantendo o e-mail identificado como não confirmado. A recuperação por e-mail depende de configurar SMTP. Gestores podem copiar links de convite para compartilhar individualmente.
+
+## Vercel e banco persistente
+
+Importe o repositório como projeto FastAPI. `app.py` é o ponto de entrada e `requirements.txt` da raiz carrega as dependências. Configure `APP_ENV=production`, `APP_URL` com a origem do front, uma chave Fernet exclusiva em `ENCRYPTION_KEY` e conecte o PostgreSQL do Neon ao projeto (variável `DATABASE_URL` ou `POSTGRES_URL`).
+
+O servidor recusa usar SQLite na Vercel/produção. Novos anexos são cifrados e persistidos no PostgreSQL, sem depender de arquivos temporários. O worker contínuo é desativado na Vercel; os agendamentos e envio de e-mails em segundo plano exigem configurar um executor externo antes de utilizá-los nessa hospedagem.
 
 O processo Python lê variáveis de ambiente. O `.env` é carregado automaticamente pelo Docker Compose, não pelo comando Uvicorn. Sem SMTP, os e-mails ficam na caixa de saída local e o cadastro de desenvolvimento apresenta seu link de confirmação.
 

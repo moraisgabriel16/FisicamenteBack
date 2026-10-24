@@ -23,6 +23,9 @@ fernet = Fernet(key)
 hasher = PasswordHasher()
 DUMMY_HASH = hasher.hash(secrets.token_urlsafe(24))
 
+def email_verification_required():
+    return os.getenv('REQUIRE_EMAIL_VERIFICATION','true').lower() not in {'false','0','no'}
+
 def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -46,7 +49,7 @@ def current_user(request: Request, db=Depends(get_db)):
     if not session or session.expires < datetime.now(timezone.utc).isoformat():
         raise HTTPException(401, 'Entre na sua conta para continuar.')
     user = db.get(User, session.user_id)
-    if not user or not user.active or not user.verified:
+    if not user or not user.active or (email_verification_required() and not user.verified):
         raise HTTPException(401, 'Conta indisponível ou e-mail não confirmado.')
     return user
 

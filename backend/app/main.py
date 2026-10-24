@@ -73,9 +73,12 @@ def worker(stop):
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(engine)
-    stop=threading.Event(); thread=threading.Thread(target=worker,args=(stop,),daemon=True); thread.start()
+    stop=threading.Event(); thread=None
+    if not SERVERLESS:
+        thread=threading.Thread(target=worker,args=(stop,),daemon=True); thread.start()
     yield
-    stop.set(); thread.join(timeout=1)
+    stop.set()
+    if thread: thread.join(timeout=1)
 
 app=FastAPI(title='FísicaMente API',version='1.0.0',lifespan=lifespan)
 attempts=defaultdict(deque)
@@ -148,19 +151,30 @@ def base_seed(db, school, owner):
         db.add(Record(school_id=school.id,owner_id=owner.id,kind='atividades',data=dict(name=name,criterion=criterion,description=description,minutes=15,materials='',bncc='')))
 
 @app.get('/api/v1/health')
-def health(): return {'status':'ok'}
+def health(db=Depends(get_db)):
+    from sqlalchemy import text
+    db.execute(text('SELECT 1'))
+    return {'status':'ok','database':'connected'}
+
+@app.get('/api/v1/auth/config')
+def auth_config():
+    return {'email_verification_required':email_verification_required(),'email_delivery_available':bool(os.getenv('SMTP_HOST'))}
 
 @app.post('/api/v1/auth/register',status_code=201)
 def register(body:Registration,db=Depends(get_db)):
+    if PRODUCTION and email_verification_required() and not os.getenv('SMTP_HOST'):
+        raise HTTPException(503,'O envio de confirmação ainda não foi configurado. Contate a administração.')
     if db.scalar(select(User).where(User.email==str(body.email).lower())): raise HTTPException(409,'Este e-mail já está cadastrado.')
     school=School(name=body.school); db.add(school); db.flush()
     user=User(school_id=school.id,name=body.name,email=str(body.email).lower(),password=valid_password(body.password),role='coordenador')
     db.add(user);db.flush();base_seed(db,school,user)
-    raw=make_token(db,'verify',{'user_id':user.id})
-    url=f'{APP_URL}/?action=verify&token={raw}'
-    outbox(db,school.id,user.email,'Confirme sua conta FísicaMente',url)
+    url=None
+    if email_verification_required():
+        raw=make_token(db,'verify',{'user_id':user.id})
+        url=f'{APP_URL}/?action=verify&token={raw}'
+        outbox(db,school.id,user.email,'Confirme sua conta FísicaMente',url)
     audit(db,user,'aceite-termos-v1',user.id);db.commit()
-    return {'message':'Conta criada. Confirme seu e-mail para entrar.','development_link':url if not PRODUCTION and not os.getenv('SMTP_HOST') else None}
+    return {'message':'Conta criada. Confirme seu e-mail para entrar.' if email_verification_required() else 'Conta criada. Você já pode entrar.','can_login':not email_verification_required(),'development_link':url if not PRODUCTION and not os.getenv('SMTP_HOST') else None}
 
 @app.post('/api/v1/auth/verify')
 def confirm(body:TokenBody,db=Depends(get_db)):
@@ -171,7 +185,7 @@ def login(body:Login,response:Response,db=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==str(body.email).lower()))
     matches=verify(body.password,user.password if user else DUMMY_HASH)
     if not user or not matches or not user.active: raise HTTPException(401,'E-mail ou senha inválidos.')
-    if not user.verified: raise HTTPException(403,'Confirme seu e-mail antes de entrar.')
+    if email_verification_required() and not user.verified: raise HTTPException(403,'Confirme seu e-mail antes de entrar.')
     login_session(db,user,response); audit(db,user,'login',user.id);db.commit();return public_user(user)
 
 @app.post('/api/v1/auth/logout')
@@ -186,6 +200,7 @@ def refresh_session(request:Request,response:Response,user=Depends(current_user)
 
 @app.post('/api/v1/auth/forgot')
 def forgot(body:EmailBody,db=Depends(get_db)):
+    if PRODUCTION and not os.getenv('SMTP_HOST'): raise HTTPException(503,'A recuperação por e-mail ainda não está disponível. Contate a administração.')
     user=db.scalar(select(User).where(User.email==str(body.email).lower()))
     if user:
         raw=make_token(db,'reset',{'user_id':user.id},1);outbox(db,user.school_id,user.email,'Redefinir senha FísicaMente',f'{APP_URL}/?action=reset&token={raw}');db.commit()
@@ -193,6 +208,7 @@ def forgot(body:EmailBody,db=Depends(get_db)):
 
 @app.post('/api/v1/auth/resend')
 def resend(body:EmailBody,db=Depends(get_db)):
+    if PRODUCTION and not os.getenv('SMTP_HOST'): raise HTTPException(503,'O envio de e-mails ainda não está disponível.')
     user=db.scalar(select(User).where(User.email==str(body.email).lower()))
     if user and not user.verified:
         raw=make_token(db,'verify',{'user_id':user.id});outbox(db,user.school_id,user.email,'Confirme sua conta FísicaMente',f'{APP_URL}/?action=verify&token={raw}');db.commit()
@@ -205,7 +221,7 @@ def reset(body:Reset,db=Depends(get_db)):
 
 @app.get('/api/v1/me')
 def me(user=Depends(current_user),db=Depends(get_db)):
-    return {**public_user(user),'school':{'id':user.school_id,'name':db.get(School,user.school_id).name},'development':not PRODUCTION and not os.getenv('SMTP_HOST')}
+    return {**public_user(user),'school':{'id':user.school_id,'name':db.get(School,user.school_id).name},'development':not PRODUCTION and not os.getenv('SMTP_HOST'),'email_delivery_available':bool(os.getenv('SMTP_HOST'))}
 
 def require(user, roles):
     if user.role not in roles: raise HTTPException(403,'Seu perfil não permite esta operação.')
@@ -269,7 +285,7 @@ def invite(body:Invite,user=Depends(current_user),db=Depends(get_db)):
     if db.scalar(select(User).where(User.email==str(body.email).lower())): raise HTTPException(409,'E-mail já cadastrado.')
     raw=make_token(db,'invite',dict(school_id=user.school_id,email=str(body.email).lower(),role=body.role,student_ids=body.student_ids))
     url=f'{APP_URL}/?action=invite&token={raw}';outbox(db,user.school_id,str(body.email),'Convite para FísicaMente',url);audit(db,user,'convite',str(body.email));db.commit()
-    return {'message':'Convite registrado para envio.','development_link':url if not PRODUCTION and not os.getenv('SMTP_HOST') else None}
+    return {'message':'Convite registrado para envio.' if os.getenv('SMTP_HOST') else 'Convite criado. Compartilhe o link com a pessoa convidada.','invite_link':url if not os.getenv('SMTP_HOST') else None,'development_link':url if not PRODUCTION and not os.getenv('SMTP_HOST') else None}
 
 @app.post('/api/v1/auth/accept')
 def accept(body:Accept,db=Depends(get_db)):
@@ -604,7 +620,7 @@ async def upload_attachment(student_id:str,file:UploadFile,user=Depends(current_
     mime='application/pdf' if raw.startswith(b'%PDF-') else 'image/png' if raw.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg' if raw.startswith(b'\xff\xd8\xff') else None
     if not mime: raise HTTPException(422,'Envie PDF, PNG ou JPEG válido.')
     r=Record(school_id=user.school_id,owner_id=user.id,kind='anexos',student_id=student_id,data=dict(name=(file.filename or 'arquivo')[:180],mime=mime,size=len(raw)));db.add(r);db.flush()
-    (DATA / (r.id+'.enc')).write_bytes(fernet.encrypt(raw));audit(db,user,'anexar',r.id);db.commit();return payload(r)
+    db.add(AttachmentBlob(id=r.id,encrypted=fernet.encrypt(raw)));audit(db,user,'anexar',r.id);db.commit();return payload(r)
 
 @app.get('/api/v1/attachments/{student_id}')
 def attachments(student_id:str,user=Depends(current_user),db=Depends(get_db)):
@@ -617,4 +633,11 @@ def attachment_download(id:str,user=Depends(current_user),db=Depends(get_db)):
     require(user,{'coordenador','responsavel'});r=lookup(db,user,id,'anexos')
     if not accessible(db,user,r): raise HTTPException(403)
     audit(db,user,'baixar-anexo',id);db.commit()
-    return Response(fernet.decrypt((DATA/(r.id+'.enc')).read_bytes()),media_type=r.data['mime'],headers={'Content-Disposition':'attachment; filename="documento.'+{'application/pdf':'pdf','image/png':'png','image/jpeg':'jpg'}[r.data['mime']]+'"'})
+    blob=db.get(AttachmentBlob,r.id)
+    if blob:
+        encrypted=blob.encrypted
+    elif not SERVERLESS and (DATA/(r.id+'.enc')).is_file():
+        encrypted=(DATA/(r.id+'.enc')).read_bytes()
+    else:
+        raise HTTPException(404,'Conteúdo do anexo não encontrado.')
+    return Response(fernet.decrypt(encrypted),media_type=r.data['mime'],headers={'Content-Disposition':'attachment; filename="documento.'+{'application/pdf':'pdf','image/png':'png','image/jpeg':'jpg'}[r.data['mime']]+'"'})

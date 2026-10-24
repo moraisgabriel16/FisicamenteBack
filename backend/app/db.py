@@ -2,13 +2,23 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import JSON, Boolean, ForeignKey, LargeBinary, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-DATA = Path(__file__).resolve().parents[1] / 'data'
+SERVERLESS = bool(os.getenv('VERCEL'))
+DATA = Path(os.getenv('DATA_DIR', '/tmp/fisicamente' if SERVERLESS else str(Path(__file__).resolve().parents[1] / 'data')))
 DATA.mkdir(exist_ok=True)
-URL = os.getenv('DATABASE_URL', f'sqlite:///{(DATA / "fisicamente.db").as_posix()}')
-engine = create_engine(URL, connect_args={'check_same_thread': False} if URL.startswith('sqlite') else {}, pool_pre_ping=True)
+URL = os.getenv('DATABASE_URL') or os.getenv('POSTGRES_URL')
+if not URL:
+    if SERVERLESS or os.getenv('APP_ENV') == 'production':
+        raise RuntimeError('Configure DATABASE_URL com um banco PostgreSQL persistente antes de publicar a API.')
+    URL=f'sqlite:///{(DATA / "fisicamente.db").as_posix()}'
+if URL.startswith(('postgres://','postgresql://')):
+    URL='postgresql+psycopg://'+URL.split('://',1)[1]
+if (SERVERLESS or os.getenv('APP_ENV') == 'production') and URL.startswith('sqlite'):
+    raise RuntimeError('SQLite local não pode ser utilizado para os dados de produção.')
+engine = create_engine(URL, connect_args={'check_same_thread': False} if URL.startswith('sqlite') else {}, pool_pre_ping=True, **({'poolclass':NullPool} if SERVERLESS else {}))
 if URL.startswith('sqlite'):
     @event.listens_for(engine, 'connect')
     def sqlite_setup(connection, _):
@@ -81,6 +91,11 @@ class Audit(Base):
     action: Mapped[str] = mapped_column(String(80))
     target: Mapped[str] = mapped_column(String(100))
     at: Mapped[str] = mapped_column(String(40), default=now)
+
+class AttachmentBlob(Base):
+    __tablename__ = 'anexos_conteudo'
+    id: Mapped[str] = mapped_column(ForeignKey('registros.id'), primary_key=True)
+    encrypted: Mapped[bytes] = mapped_column(LargeBinary)
 
 class Mail(Base):
     __tablename__ = 'emails'

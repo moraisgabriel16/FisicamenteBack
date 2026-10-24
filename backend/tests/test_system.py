@@ -198,3 +198,28 @@ def test_correction_preserves_previous_and_rejects_stale(client):
     assert result.json()['score']==4
     assert result.json()['revisions'][0]['previous']['score']==3
     assert client.patch('/api/v1/evaluations/'+row['id'],json=body).status_code==409
+
+def test_immediate_registration_keeps_email_unverified(client,monkeypatch):
+    monkeypatch.setenv('REQUIRE_EMAIL_VERIFICATION','false')
+    email=f'{uuid4()}@example.com'
+    result=client.post('/api/v1/auth/register',json={'name':'Gestora Teste','email':email,'password':'SenhaSegura123!','school':'Teste Cadastro Imediato','accepted_terms':True})
+    assert result.status_code==201,result.text
+    assert result.json()['can_login'] is True
+    assert result.json()['development_link'] is None
+    assert client.post('/api/v1/auth/login',json={'email':email,'password':'SenhaSegura123!'}).status_code==200
+    assert client.get('/api/v1/me').json()['verified'] is False
+    assert client.get('/api/v1/auth/config').json()['email_verification_required'] is False
+    monkeypatch.setenv('REQUIRE_EMAIL_VERIFICATION','true')
+    assert client.get('/api/v1/me').status_code==401
+
+def test_encrypted_attachment_is_in_database(client):
+    from backend.app.db import AttachmentBlob
+    _,_,_,student,_,_=setup_school(client)
+    raw=b'%PDF-1.4\nfixture de persistencia'
+    result=client.post('/api/v1/attachments/'+student['id'],files={'file':('teste.pdf',raw,'application/pdf')})
+    assert result.status_code==201,result.text
+    with Session() as db:
+        blob=db.get(AttachmentBlob,result.json()['id'])
+        assert blob is not None
+        assert raw not in blob.encrypted
+    assert client.get('/api/v1/attachment/'+result.json()['id']+'/download').content==raw
