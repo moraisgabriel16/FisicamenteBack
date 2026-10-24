@@ -11,3 +11,7 @@ backend/data/
 *.log
 htmlcov/
 .coverage
+.local/
+*-demo.json
+*-demo.tmp
+Acesso-demonstracao-*.md
